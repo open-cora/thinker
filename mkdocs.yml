@@ -1,0 +1,59 @@
+site_name: Thinker
+site_description: Proposes what to run next.
+repo_url: https://github.com/open-cora/thinker
+repo_name: open-cora/thinker
+edit_uri: ""
+
+theme:
+  name: material
+  custom_dir: overrides
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/theme.css
+
+extra_javascript:
+  - javascripts/hero-fade.js
+
+extra:
+  hero:
+    masthead: Thinker
+    tagline: Metis, goddess of wise counsel
+    image: assets/hero-thinker.webp
+    image_small: assets/hero-thinker-1200.webp
+    image_alt: >-
+      Cumaean Sibyl, by Angelica Kauffman after Domenichino, about 1763: a seated woman holding an unrolled inscribed scroll.
+    strip_label: CORA
+    strip_text: keeper
+    strip_url: https://github.com/open-cora/keeper
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
