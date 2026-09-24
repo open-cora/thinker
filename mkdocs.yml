@@ -40,8 +40,8 @@ extra:
   hero:
     masthead: Thinker
     tagline: Metis, goddess of wise counsel
-    image: assets/hero-thinker.webp
-    image_small: assets/hero-thinker-1200.webp
+    image: assets/hero-thinker-3600.webp
+    srcset: "assets/hero-thinker-1200.webp 1200w, assets/hero-thinker-2400.webp 2400w, assets/hero-thinker-3600.webp 3600w"
     image_alt: >-
       Cumaean Sibyl, by Angelica Kauffman after Domenichino, about 1763: a seated woman holding an unrolled inscribed scroll.
     strip_label: CORA
