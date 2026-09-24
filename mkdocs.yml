@@ -44,9 +44,6 @@ extra:
     srcset: "assets/hero-thinker-1200.webp 1200w, assets/hero-thinker-2400.webp 2400w, assets/hero-thinker-3600.webp 3600w"
     image_alt: >-
       Cumaean Sibyl, by Angelica Kauffman after Domenichino, about 1763: a seated woman holding an unrolled inscribed scroll.
-    strip_label: CORA
-    strip_text: keeper
-    strip_url: https://github.com/open-cora/keeper
 
 markdown_extensions:
   - admonition
