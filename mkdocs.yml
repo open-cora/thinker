@@ -44,8 +44,8 @@ extra:
     srcset: "assets/hero-thinker-1200.webp 1200w, assets/hero-thinker-2400.webp 2400w, assets/hero-thinker-3600.webp 3600w"
     image_alt: >-
       Cumaean Sibyl, by Angelica Kauffman after Domenichino, about 1763: a seated woman holding an unrolled inscribed scroll.
-    credit: Angelica Kauffman · Cumaean Sibyl · public domain
-    credit_url: https://commons.wikimedia.org/wiki/File:Angelica_Kauffman_-_Cumaean_Sibyl_after_Domenichino_(c.1763).jpg
+    credit: Angelica Kauffman · Cumaean Sibyl · National Museum of Women in the Arts
+    credit_url: https://artsandculture.google.com/asset/cumaean-sibyl-after-domenichino-angelica-kauffman/aQGmLkuxZZ3kZg?hl=en
 
 markdown_extensions:
   - admonition
