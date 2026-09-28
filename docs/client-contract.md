@@ -3,13 +3,13 @@
 *What this client asks of the keeper, and what it may not assume.*
 
 The keeper has clients that are not part of it. The reporter watches an
-acquisition engine and records what it sees. The conductor composes a procedure
+engine and records what it sees. The conductor composes a procedure
 and drives a beamline through it. This project reads an execution back and advises
 what to run next. None of them imports `keeper`, nothing in the keeper imports any
 of them, and they do not import each other.
 
 A page of this name in the conductor and the reporter settles a different question:
-how those two name the same acquisition, and the two metadata keys that join an
+how those two name the same run, and the two metadata keys that join an
 engine's run to a keeper step. This project is not party to that agreement and
 carries no copy of it, because a thinker never speaks to an engine. It reads
 records the keeper already holds and writes one the keeper already has a place for,
@@ -80,7 +80,7 @@ answering a question the keeper deliberately left in two parts.
 
 ## What a thinker is when it gets there
 
-An actor with a credential, the same way a person is. The proposal carries a plan
+An actor with a credential, the same way a person is. The proposal carries an operation
 and parameters and nothing about who is proposing: the keeper reads that off the
 authenticated principal, so the token in the configuration is what a thinker
 advises as, and revoking it is how a facility stops one advising.
@@ -120,7 +120,7 @@ say it and exit, and let the person decide whether to ask again.
 ## What this page does not promise
 
 **That a proposal is a good idea.** The keeper checks that parameters satisfy the
-plan's schema and nothing checks anything else. A proposal is a suggestion that was
+operation's schema and nothing checks anything else. A proposal is a suggestion that was
 found runnable, not one that was found sound.
 
 **That the case is complete.** An execution's record holds what somebody reported,

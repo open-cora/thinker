@@ -103,7 +103,7 @@ status.
    conclude |  inference.conclude(case)
             |      ->  Propose | Stop | Abstain | Refer
             |
-   record   |  if Propose:  keeper.propose(plan_id, parameters)
+   record   |  if Propose:  keeper.propose(operation_id, parameters)
             |                   POST /proposals  ->  proposal_id
             |
             |  keeper.answer(inquiry_id, conclusion, case.boundary(), proposal_id)
@@ -144,9 +144,9 @@ The pairing `assemble` performs, on the key the keeper names on both sides:
    ordered, the procedure's         the id           keyed, the record's
    -----------------------          ------           -------------------
 
-   ("s1", {move motor:x 1.5})  <---- "s1" ---->  "Done"
-   ("s2", {acquire plan-9})    <---- "s2" ---->  None       reported, no outcome
-   ("s3", {move motor:x 2.0})  <---- "s3" ---->  absent     never reached at all
+   ("s1", {set motor:x 1.5})  <---- "s1" ---->  "Done"
+   ("s2", {acquire operation-9})    <---- "s2" ---->  None       reported, no outcome
+   ("s3", {set motor:x 2.0})  <---- "s3" ---->  absent     never reached at all
 
                                     "s9" ---->  "Done"      refused: the procedure
                                                             lists no such step, so
@@ -222,9 +222,9 @@ reported by whatever formed the conclusion, so nothing can inflate it.
 
 ## Where the vocabulary is the keeper's, and why that is not a leak
 
-`Propose` carries a `plan_id`, and a case is keyed by ids the keeper minted.
-That is deliberate. A proposal is refused unless its parameters satisfy the
-schema its plan declares, so an id this package renamed would be an id it had
+`Propose` carries an `operation_id`, and a case is keyed by ids the keeper
+minted. That is deliberate. A proposal is refused unless its parameters satisfy
+the schema its operation declares, so an id this package renamed would be an id it had
 to translate back before anything could act on it, and the translation would
 be the only thing the new name bought.
 

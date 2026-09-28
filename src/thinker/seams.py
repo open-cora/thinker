@@ -3,7 +3,7 @@
 A seam is a Protocol here and an adapter somewhere else, so which system of
 record a deployment reads and which provider does its thinking are choices
 it makes at its entrypoint. That is the arrangement `apps/conductor` uses
-for control and acquisition, and the reason is the same one twice over.
+for control and run, and the reason is the same one twice over.
 
 Neither Protocol carries a Port suffix. Everything in this module is a seam,
 so saying so distinguishes nothing, and `apps/keeper` forbids the suffix for
@@ -181,11 +181,11 @@ class Keeper(Protocol):
         """
         ...
 
-    def propose(self, plan_id: str, parameters: Mapping[str, object]) -> str:
+    def propose(self, operation_id: str, parameters: Mapping[str, object]) -> str:
         """Put a run forward, and return the id of the proposal that records it.
 
         The proposal is refused unless the parameters satisfy the schema the
-        plan declares, and an adapter must let that refusal through rather
+        operation declares, and an adapter must let that refusal through rather
         than swallowing it. A conclusion that could not have run is worth
         more as an error than as a row.
 
