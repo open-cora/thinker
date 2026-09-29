@@ -1,11 +1,12 @@
-"""The `Keeper` seam over the keeper's HTTP API, which is the only way in.
+"""The four keeper seams over its HTTP API, which is the only way in.
 
 Every call here goes out. The keeper holds no registry of thinkers and
 dials nothing, so what this reads and what it writes leave through the same
 surface every other client uses.
 
-## Six verbs over seven routes
+## Seven verbs over eight routes
 
+    take      GET  /inquiries?status=Open&limit=1&wait=
     read      GET  /executions/{execution_id}
               GET  /procedures/{procedure_id}
     ask       POST /inquiries
@@ -13,6 +14,10 @@ surface every other client uses.
     claim     POST /inquiries/{inquiry_id}/claim
     answer    POST /inquiries/{inquiry_id}/answer
     propose   POST /proposals
+
+`take` and `question` answer the same three facts off the same record,
+and both are here because they are asked at different moments. One names
+the question it wants and the other is asking which question to name.
 
 Reading is two requests because a case is two halves and the keeper keeps
 them apart. The execution says how each of its steps ended and cites the
@@ -44,10 +49,10 @@ compared against the single value the keeper calls terminal.
 ## What a refusal on a proposal means
 
 A 400 is the keeper saying the values do not satisfy the schema the
-operation declares. It travels as an error rather than becoming a quieter conclusion,
-because a proposal that could not have run is worth more as a failure than
-as a row: something concluded a run that was never possible, and turning
-that into an abstention would file the evidence away.
+operation declares. It travels as an error rather than becoming a quieter
+conclusion, because a proposal that could not have run is worth more as a
+failure than as a row: something concluded a run that was never possible,
+and turning that into an abstention would file the evidence away.
 
 ## Why a refused claim is the one status that is not an error
 
@@ -62,12 +67,13 @@ keeper and this adapter disagree about something.
 `CONCLUSIONS` below, and nowhere else. Public, like `ENDED` beside it, so
 the test that checks it covers every conclusion class can read it: a private
 mapping would be one the exhaustiveness check could not reach, which would
-leave the four-to-four correspondence resting on somebody noticing. The record's vocabulary and this
-package's class names are the same four words today, so the mapping looks
-like it could be `type(conclusion).__name__`. Writing it out is what stops
-a rename on this side quietly changing what lands in a table nobody can
-edit afterwards, and `test_keeper_http.py` checks that every conclusion
-class has an entry rather than trusting the four to stay four.
+leave the four-to-four correspondence resting on somebody noticing. The
+record's vocabulary and this package's class names are the same four words
+today, so the mapping looks like it could be `type(conclusion).__name__`.
+Writing it out is what stops a rename on this side quietly changing what
+lands in a table nobody can edit afterwards, and `test_http_keeper.py`
+checks that every conclusion class has an entry rather than trusting the
+four to stay four.
 """
 
 from __future__ import annotations
@@ -100,6 +106,29 @@ being relied on.
 
 _ALREADY_TAKEN: Final = 409
 """The one status a claim may answer without this being an error."""
+
+
+OPEN: Final = "Open"
+"""The one inquiry status a thinker goes looking for.
+
+A question nothing has taken up. One in any other status either has a
+thinker on it or has been answered, and asking for those would be asking
+to spend an inference on work that is done or being done.
+"""
+
+TIMEOUT_MARGIN_SECONDS: Final = 10.0
+"""How much longer than its wait a held request gives the socket.
+
+Covers the round trip and the keeper's own work either side of the wait.
+Generous rather than tight: a margin that is too small turns every quiet
+wait into a timeout, and one that is too large costs nothing, because the
+keeper answers at the ceiling and the client never reaches this.
+
+Without it this adapter would inherit the client-wide timeout, which the
+entrypoint sets to the same thirty seconds a wait asks for. That failure
+is quiet in the worst way: the process is alive, the route is right, and
+every wait that nothing answers raises instead of returning empty.
+"""
 
 
 ENDED: Final = "Ended"
@@ -142,7 +171,9 @@ class HttpClient(Protocol):
         self,
         url: str,
         *,
+        params: Mapping[str, str] | None = ...,
         headers: Mapping[str, str] | None = ...,
+        timeout: float | None = ...,
     ) -> Response: ...
 
     def post(
@@ -249,6 +280,40 @@ class HttpKeeper:
             ended=str(execution["status"]) == ENDED,
         )
 
+    def take(self, wait: float) -> Question | None:
+        """Ask for one open question, holding the request open for a while.
+
+        One row rather than a page. A thinker answers one question at a
+        time, and asking for more would mean holding rows another thinker
+        may claim while the first is still thinking.
+
+        Everything a `Question` holds is on the row, so this is one
+        request and not two. The listing carries the objective where the
+        proposal listing leaves its parameters off, which the keeper
+        decided partly so that a caller scanning for the question it
+        cares about can read one.
+
+        The timeout is passed per request rather than left to the client.
+        A client built with a shorter one raises on every wait that
+        nothing answers, and a thinker would then only ever see questions
+        that landed inside the first few seconds of each ask.
+        """
+        page = self._get(
+            "/inquiries",
+            params={"status": OPEN, "limit": "1", "wait": str(wait)},
+            timeout=wait + TIMEOUT_MARGIN_SECONDS,
+        )
+        rows: Sequence[Mapping[str, Any]] = page["items"]
+        if not rows:
+            return None
+
+        row = rows[0]
+        return Question(
+            inquiry_id=str(row["inquiry_id"]),
+            execution_id=str(row["execution_id"]),
+            objective=str(row["objective"]),
+        )
+
     def ask(self, execution_id: str, objective: str) -> Question:
         """Open an inquiry, and hand it back with the id the keeper minted.
 
@@ -351,9 +416,11 @@ class HttpKeeper:
         """Put a run forward, and return the id of the proposal that records it.
 
         No idempotency key. The route takes one, and a thinker has nothing
-        to put in it: two runs of a thinker over one execution are two acts
-        of advising rather than one retried, and collapsing them would hide
-        a thinker that had been invoked twice.
+        to put in it: two thinkings over one execution are two acts of
+        advising rather than one retried, and collapsing them would hide
+        a thinker that had thought twice. A loop does not change that,
+        because it retries a turn that wrote nothing rather than an act
+        half done.
         """
         path = "/proposals"
         response = self.http.post(
@@ -365,8 +432,19 @@ class HttpKeeper:
             raise RequestRefusedError(response.status_code, response.text, method="POST", path=path)
         return str(response.json()["proposal_id"])
 
-    def _get(self, path: str) -> Any:
-        response = self.http.get(self._url(path), headers=self._headers())
+    def _get(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        response = self.http.get(
+            self._url(path),
+            params=params,
+            headers=self._headers(),
+            timeout=timeout,
+        )
         if response.status_code != 200:
             raise RequestRefusedError(response.status_code, response.text, method="GET", path=path)
         return response.json()

@@ -1,6 +1,6 @@
 """Answer one question about one execution, and write down what was concluded.
 
-Three moves in a fixed order, once per invocation:
+Three moves in a fixed order, once per question:
 
     read      ask the keeper what the execution was asked to do and what
               became of it, and pair the two halves into a case
@@ -8,11 +8,15 @@ Three moves in a fixed order, once per invocation:
     record    write the conclusion down, and the proposal first if the
               conclusion produced one
 
-There is no loop. A conductor has one because work is dispatched to it and
-it has to go looking; a thinker is handed one question, answers it, and
-exits. What it is handed is now an id either way, and the difference
-between a question this thinker opened and one it was given is settled
-before this function is called.
+There is no loop in here, and there is one around it. `intake` takes a
+question, claims it, and calls this; a command line naming a question
+calls this directly. Either way what arrives is one question, and where
+it came from was settled before this function was reached.
+
+Keeping the loop out is what lets this be handed three seams rather than
+five. A thinking cannot take a question or claim one, so it cannot
+answer a question nobody gave it, and the rule is the shape of the
+argument list rather than something a reader has to observe.
 
 ## All four conclusions are written now, and one of them twice
 
@@ -44,7 +48,7 @@ because unsticking a queue is not worth a false line in a permanent record.
 
 ## Why the case comes back
 
-So that whoever invoked this can be shown what was read before being shown
+So that whatever called this can be shown what was read before being shown
 what was concluded. A conclusion is only as good as the case behind it, and
 the commonest way for one to be wrong is for the case to be thinner than
 the reader assumed: an execution whose record covers two of its six steps
@@ -62,7 +66,7 @@ from thinker.conclusions import Propose
 if TYPE_CHECKING:
     from thinker.case import Case, Question
     from thinker.conclusions import Conclusion
-    from thinker.seams import Inference, Keeper
+    from thinker.seams import Advising, Concluding, Observing
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +89,13 @@ class Thought:
     inquiry_id: str
 
 
-def think(question: Question, *, keeper: Keeper, inference: Inference) -> Thought:
+def think(
+    question: Question,
+    *,
+    observing: Observing,
+    advising: Advising,
+    concluding: Concluding,
+) -> Thought:
     """Answer one question, and put a run forward if that is the conclusion.
 
     The question carries both things this used to take separately: which
@@ -101,15 +111,15 @@ def think(question: Question, *, keeper: Keeper, inference: Inference) -> Though
     The boundary is counted from the case rather than taken from anywhere
     else, so what the record says was seen is what the inference was shown.
     """
-    case = assemble(keeper.read(question.execution_id), objective=question.objective)
-    conclusion = inference.conclude(case)
+    case = assemble(observing.read(question.execution_id), objective=question.objective)
+    conclusion = concluding.conclude(case)
 
     proposal_id = (
-        keeper.propose(conclusion.operation_id, conclusion.parameters)
+        advising.propose(conclusion.operation_id, conclusion.parameters)
         if isinstance(conclusion, Propose)
         else None
     )
-    keeper.answer(question.inquiry_id, conclusion, case.boundary(), proposal_id)
+    advising.answer(question.inquiry_id, conclusion, case.boundary(), proposal_id)
 
     return Thought(
         case=case,
