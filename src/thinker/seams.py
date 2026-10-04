@@ -1,4 +1,4 @@
-"""The five outward seams, named for what a thinker does through them.
+"""The seven outward seams, named for what a thinker does through them.
 
 A seam is a Protocol here and an adapter under `thinker.adapters`, so
 which system of record a deployment reads and which provider does its
@@ -9,13 +9,14 @@ None of the Protocols carries a Port suffix. Everything in this module is
 a seam, so saying so distinguishes nothing, and `apps/keeper` forbids the
 suffix for that reason.
 
-## Four doors to the keeper, where one would have been the same place
+## Six doors to the keeper, where one would have been the same place
 
-`Seeking`, `Observing`, `Questioning` and `Advising` all reach the keeper
-today, and one adapter implements all four. They are four Protocols
-anyway, because they are four things a thinker does: go looking for a
-question, read what an execution did, keep a record of somebody asking,
-and put a conclusion and a run forward.
+`Seeking`, `Claiming`, `Observing`, `Questioning`, `Advising` and `Gathering`
+all reach the keeper today, and one adapter implements all six. They are six
+Protocols anyway, because they are six things a thinker does: go looking
+for a question, take one up, read what an execution did, keep a record of
+somebody asking, put a conclusion and a run forward, and go back for what
+the case does not carry.
 
 Three of them were once one Protocol with six verbs, on the argument
 that reading and writing go through one door because they go to one
@@ -30,9 +31,19 @@ other's verbs, and a fat port would hand each of them verbs it must
 never call. `think` is handed exactly what it uses and cannot take a
 question or claim one, which is not a rule anybody has to follow.
 
-`Seeking` is a fifth by that same rule rather than a fourth verb on
-`Questioning`. Finding work and keeping the record of it are two
-subjects, and only the loop wants the first.
+`Seeking` is separate from `Questioning` by that same rule. Finding work
+and keeping the record of it are two subjects, and only the loop wants
+the first.
+
+`Claiming` is separate for the same reason, and for a while was not,
+which made this the one place the rule above was stated and then broken.
+`claim` sat on `Questioning` because taking a question up is a fact
+about that question's record, which it is. It is also the only verb here
+that two callers want: the loop claims what it just found, and a thinker
+handed an inquiry id on a command line claims that. So wherever it sits
+beside something, the other caller is given a verb it must never call,
+and the loop was the caller that got them. Its own Protocol is what
+costs neither of them anything.
 
 ## Every call goes out, and none comes in
 
@@ -97,7 +108,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from thinker.case import Boundary, Case, Question, Reading
     from thinker.conclusions import Conclusion
@@ -160,7 +171,7 @@ class Seeking(Protocol):
 
 @runtime_checkable
 class Questioning(Protocol):
-    """Keeping the record of somebody asking, and of who is answering it."""
+    """Keeping the record of somebody asking."""
 
     def ask(self, execution_id: str, objective: str) -> Question:
         """Put a question on the record, and return it with its id.
@@ -181,16 +192,40 @@ class Questioning(Protocol):
         """
         ...
 
-    def question(self, inquiry_id: str) -> Question:
-        """Read back a question somebody else put.
+    def read_inquiry(self, inquiry_id: str) -> Question:
+        """Read the question somebody else put.
 
         The entry point for a thinker answering an inquiry it did not
         open, which is how a question asked over another surface reaches
         one. What comes back names the execution to read and the
         objective to think toward, so this is the call that replaces
         both arguments the command line used to carry.
+
+        Two earlier spellings and what was wrong with each. The first
+        was the single word question, which parsed and did not read
+        aloud: a `Questioning` returning a `Question` from a call named
+        for the same word is that word doing three jobs, and it was the
+        only verb across the seams of this tree that was a noun.
+
+        The second read the question back, and that idiom pointed the
+        wrong way. Reading something back means reciting what you wrote
+        down, and the subject here is an inquiry this thinker did not
+        open.
+        Naming the thing read says what the one word could not and
+        carries no claim about who wrote it.
+
+        Being two words also brings it inside the citation check, which
+        skips a bare lowercase token because prose cannot be told from
+        code at that shape. That is a convenience and not the reason:
+        six verbs across these seams are single tokens the check cannot
+        see, so it was never a rule.
         """
         ...
+
+
+@runtime_checkable
+class Claiming(Protocol):
+    """Taking a question up, so a second thinker does not spend on it too."""
 
     def claim(self, inquiry_id: str) -> bool:
         """Say this thinker has the question, and report whether it got it.
@@ -211,9 +246,17 @@ class Questioning(Protocol):
         reading the execution anyway. A thinker that respects the False
         is what makes the claim worth having.
 
-        Not called when this thinker opened the question itself. Nobody
-        else can hold an id that was minted a moment ago, so the claim
-        would record an event that says nothing.
+        It is also a Protocol of its own here and a second verb on that
+        conductor's taking, and what differs is how many callers want
+        it. A conductor claims in one place, the loop that took the
+        work. A thinker claims in two, and a verb wanted by two callers
+        with different companions belongs beside neither of them.
+
+        Never asked for a question this thinker opened itself, which is
+        a precondition the caller carries and not something to check
+        for here: nobody else can hold an id minted a moment ago, so
+        the claim would record an event that says nothing. Which of the
+        two ways in is which is settled where the command line is read.
         """
         ...
 
@@ -267,6 +310,110 @@ class Advising(Protocol):
 
 
 @runtime_checkable
+class Gathering(Protocol):
+    """Going back to the record for what a case does not carry.
+
+    ## Why a seam, when the thinker already reaches the keeper
+
+    This lived outside the package, in a deployment artifact, on the
+    argument that a thinker already holds a client for the record so a
+    seam would declare a capability it has. The premise was false about
+    the code underneath it: that module loaded the configuration a
+    second time out of an environment variable and used the HTTP library
+    directly rather than the client the service opened. One of those is
+    a capability the thinker has; two are a second way in that nothing
+    wired, nothing swapped and no test in this package reached.
+
+    ## Why the core declares it and never calls it
+
+    Nothing in this package asks these questions. `think` is handed the
+    seam only to pass it on, and the whole of what comes back is read by
+    whatever is doing the thinking. Declared here anyway, because what
+    makes something a seam is that a deployment chooses who answers it:
+    a suite stands a fake in, a thinker reading something other than
+    this record stands that in, and neither has to be the keeper.
+
+    That is also why these hand back the record's own shapes rather than
+    this package's. A case is this package's reading of an execution and
+    the core acts on it, so it is parsed and bounded. Evidence is not
+    acted on here at all, and parsing it into types nothing in the core
+    inspects would be a translation performed for no reader.
+
+    ## Why `execution` fetches what `Observing` already fetched
+
+    Deliberately, and worth saying so before somebody economises it
+    away. `Observing.read` reads the same execution one frame earlier
+    and parses it into a `Reading`, which drops the walked step ids on
+    purpose because nothing in the core joins on them. So one thinking
+    asks the record for one execution twice, in two shapes, for two
+    readers. Passing the case through instead would make the provider
+    read this package's reading of the record rather than the record,
+    which is the arrangement every paragraph above argues against.
+
+    ## Why the verbs are nouns where every other seam's are verbs
+
+    Six seams do something: they take, claim, ask, propose, answer or
+    conclude, and each parses or writes. This one only answers, and
+    names what comes back. A singular name is one document and a plural
+    name is a list, so the shape of the answer is readable before the
+    call is. A second word appears only where it narrows what comes
+    back, which is why `operation_schema` has one and the rest do not.
+
+    ## Why it is gathered rather than offered
+
+    A profile asks these before it composes anything, rather than
+    handing a model a set of callable tools. That keeps one round trip,
+    keeps the answer the same for the same record, and depends on
+    nothing a particular gateway supports. A deployment that wants the
+    other arrangement implements this seam over its own tool loop, which
+    is the reason the shape is a Protocol and not a helper.
+
+    ## What this does not do
+
+    It does not record what was looked at. A conclusion's boundary
+    counts what the record offered, not what a provider went and
+    fetched, and the two have been allowed to differ since the first
+    profile started reaching past its case. Which evidence an agent
+    chose is the agent's, in the same way its reasoning is.
+    """
+
+    def execution(self, execution_id: str) -> Mapping[str, object]:
+        """One execution as the record holds it, for the facts a case drops.
+
+        Chief among them is the id of each step as it was walked, which
+        is not the id a case carries: a case is built from the
+        procedure, so its steps are the composed ones, and anything
+        registered against a walked step is found by the walked id.
+        That one was got wrong by inferring instead of reading.
+
+        The whole document comes back rather than that one field,
+        because this seam hands over the record's own shape and which
+        of its facts are worth reading is the reader's to decide.
+        """
+        ...
+
+    def operation_schema(self, operation_id: str) -> Mapping[str, object]:
+        """The parameters an operation accepts, and their bounds.
+
+        Without it a proposal is a guess at names and ranges, and the
+        record refuses one whose parameters fail the schema rather than
+        quietly taking it, so guessing costs a whole thinking.
+        """
+        ...
+
+    def datasets(self, step_id: str) -> Sequence[Mapping[str, object]]:
+        """What one step actually produced, if anything.
+
+        By step rather than by execution, because that is what the
+        record keys on. A run that ended well and recorded nothing is
+        the shape this system exists to notice, and a thinker that
+        cannot see it goes on asking for more of a run whose output
+        nobody kept.
+        """
+        ...
+
+
+@runtime_checkable
 class Concluding(Protocol):
     """Whatever forms a conclusion from a case.
 
@@ -281,10 +428,15 @@ class Concluding(Protocol):
     another, and a deployment running the second should not implement
     something whose name says it is doing the first.
 
-    An implementation that raises stops the thinking, and nothing above
-    catches it. A thinker that could not reach its provider has not
+    An implementation that raises stops the thinking, and no conclusion
+    is written. A thinker that could not reach its provider has not
     concluded `Abstain`, and reporting one as the other would put a
     finding into the world that nothing found.
+
+    What happens after that is the caller's and not this seam's. A
+    single run ends on it; the loop says so, waits, and asks again, so
+    a provider that raises every time is retried for as long as the
+    process lives and records nothing on any of those turns.
     """
 
     def conclude(self, case: Case) -> Conclusion:
@@ -292,4 +444,12 @@ class Concluding(Protocol):
         ...
 
 
-__all__ = ["Advising", "Concluding", "Observing", "Questioning", "Seeking"]
+__all__ = [
+    "Advising",
+    "Claiming",
+    "Concluding",
+    "Gathering",
+    "Observing",
+    "Questioning",
+    "Seeking",
+]

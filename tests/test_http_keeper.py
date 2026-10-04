@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 import pytest
 
@@ -13,8 +13,12 @@ from thinker.adapters.http_keeper import (
     RequestRefusedError,
     UnknownConclusionError,
 )
-from thinker.case import Boundary, Question
+from thinker.case import Boundary, Outcome, Question
 from thinker.conclusions import Abstain, Conclusion, Propose, Refer, Stop
+from thinker.seams import Gathering
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 BASE = "https://keeper.example"
 
@@ -132,7 +136,7 @@ def test_take_gives_the_socket_longer_than_the_wait_it_asks_for() -> None:
 def test_take_builds_the_whole_question_from_the_one_row() -> None:
     """No second request, because the listing carries all three facts.
 
-    Reading the inquiry back through `question` would ask the keeper for
+    Reading the inquiry back through `read_inquiry` would ask the keeper for
     what it has just said, and would be a second place the same three
     fields are taken off a record that holds more.
     """
@@ -155,6 +159,16 @@ def test_take_answers_nothing_when_the_wait_ran_out_empty() -> None:
     assert keeper.take(30.0) is None
 
 
+def _reported(became: Mapping[str, Outcome | None]) -> dict[str, str | None]:
+    """Only the driver's word per step, for the checks that are about keying.
+
+    Those checks are about which step an outcome lands on and not about
+    what it says, so they compare the one word they are about rather than
+    growing two more columns every time the record learns a field.
+    """
+    return {step_id: None if o is None else o.reported for step_id, o in became.items()}
+
+
 def test_read_asks_for_the_execution_and_then_the_procedure_it_cites() -> None:
     """Two requests, because the keeper keeps the two halves apart."""
     keeper, http = _keeper()
@@ -172,7 +186,7 @@ def test_read_keys_each_outcome_by_the_composed_step_it_cites() -> None:
     """
     keeper, _ = _keeper()
     reading = keeper.read("exec-1")
-    assert reading.became == {"s1": "Done", "s2": None}
+    assert _reported(reading.became) == {"s1": "Done", "s2": None}
     assert [step_id for step_id, _ in reading.asked] == ["s1", "s2"]
 
 
@@ -180,7 +194,7 @@ def test_read_keys_the_record_the_same_way_whatever_order_it_arrives_in() -> Non
     """Nothing here depends on the two lists lining up, which is the point."""
     reversed_record = {**EXECUTION, "steps": list(reversed(EXECUTION["steps"]))}
     keeper, _ = _keeper(execution=reversed_record)
-    assert keeper.read("exec-1").became == {"s1": "Done", "s2": None}
+    assert _reported(keeper.read("exec-1").became) == {"s1": "Done", "s2": None}
 
 
 def test_read_carries_the_procedures_own_description_of_a_step() -> None:
@@ -196,7 +210,84 @@ def test_read_keeps_a_skipped_step_distinct_from_a_step_that_reported_nothing() 
         "steps": [{**EXECUTION["steps"][0]}, {**EXECUTION["steps"][1], "outcome": "Skipped"}],
     }
     keeper, _ = _keeper(execution=skipped)
-    assert keeper.read("exec-1").became == {"s1": "Done", "s2": "Skipped"}
+    assert _reported(keeper.read("exec-1").became) == {"s1": "Done", "s2": "Skipped"}
+
+
+def test_read_carries_the_engine_state_beside_the_word_the_driver_reported() -> None:
+    """The two claims the keeper refuses to reconcile both reach the case.
+
+    A run step whose seam returned and whose engine then failed is the
+    case this is here for. The driver saw a clean dispatch and says so,
+    the engine says the run broke, and an adapter that kept the first
+    word alone would hand the core a failure wearing the word for
+    success.
+    """
+    failed_in_the_engine = {
+        **EXECUTION,
+        "steps": [
+            {**EXECUTION["steps"][0]},
+            {
+                **EXECUTION["steps"][1],
+                "outcome": "Done",
+                "engine_reference": "run-77",
+                "engine_state": "Failed",
+            },
+        ],
+    }
+    keeper, _ = _keeper(execution=failed_in_the_engine)
+
+    assert keeper.read("exec-1").became["s2"] == Outcome(
+        reported="Done", engine_state="Failed", cause=None
+    )
+
+
+def test_read_carries_the_cause_of_a_step_whose_seam_raised() -> None:
+    """An exception's class name is the most the record holds, and it travels.
+
+    Not its message, which the keeper refuses to store. What reaches a
+    case is therefore what kind of thing went wrong and never why, which
+    is the honest ceiling rather than something this adapter drops.
+    """
+    broke = {
+        **EXECUTION,
+        "steps": [
+            {**EXECUTION["steps"][0], "outcome": "Broken", "cause": "TimeoutError"},
+            {**EXECUTION["steps"][1]},
+        ],
+    }
+    keeper, _ = _keeper(execution=broke)
+
+    assert keeper.read("exec-1").became["s1"] == Outcome(
+        reported="Broken", engine_state=None, cause="TimeoutError"
+    )
+
+
+def test_read_leaves_the_engine_words_empty_for_a_step_that_opened_no_run() -> None:
+    """A set has no engine to hear from, and that is not a missing reading."""
+    keeper, _ = _keeper()
+
+    assert keeper.read("exec-1").became["s1"] == Outcome(
+        reported="Done", engine_state=None, cause=None
+    )
+
+
+def test_read_reports_nothing_for_a_step_with_no_outcome_whatever_else_it_carries() -> None:
+    """The outcome alone decides whether the record said anything about a step.
+
+    A step the walk never reached can still carry an engine reference
+    from a run somebody opened against it, and building an outcome out of
+    the leftovers would make a step nobody reported on look reported.
+    """
+    stray = {
+        **EXECUTION,
+        "steps": [
+            {**EXECUTION["steps"][0]},
+            {**EXECUTION["steps"][1], "outcome": None, "engine_reference": "run-88"},
+        ],
+    }
+    keeper, _ = _keeper(execution=stray)
+
+    assert keeper.read("exec-1").became["s2"] is None
 
 
 def test_read_takes_ended_off_the_status_rather_than_off_the_outcomes() -> None:
@@ -337,10 +428,10 @@ def test_ask_lets_a_refused_objective_through() -> None:
         keeper.ask("exec-1", "   ")
 
 
-def test_question_reads_the_execution_and_objective_off_the_record() -> None:
+def test_read_back_carries_the_execution_and_objective_off_the_record() -> None:
     keeper, _http = _inquiry_keeper()
 
-    question = keeper.question("inquiry-1")
+    question = keeper.read_inquiry("inquiry-1")
 
     assert (question.execution_id, question.objective) == (
         "exec-1",
@@ -348,11 +439,11 @@ def test_question_reads_the_execution_and_objective_off_the_record() -> None:
     )
 
 
-def test_question_refuses_an_id_naming_no_inquiry() -> None:
+def test_read_back_refuses_an_id_naming_no_inquiry() -> None:
     keeper, _http = _inquiry_keeper()
 
     with pytest.raises(RequestRefusedError):
-        keeper.question("inquiry-absent")
+        keeper.read_inquiry("inquiry-absent")
 
 
 def test_claim_reports_that_the_question_was_this_thinkers_to_take() -> None:
@@ -490,3 +581,59 @@ def test_every_conclusion_class_has_a_word_in_this_adapter() -> None:
     ranges over the union rather than a list written here, so a fifth
     conclusion fails this instead of failing at a beamline."""
     assert set(get_args(Conclusion)) == set(CONCLUSIONS)
+
+
+def _gathering(**gets: CannedResponse) -> tuple[HttpKeeper, CannedHttp]:
+    """The adapter, answering the lookups a profile makes before deciding."""
+    http = CannedHttp(gets=dict(gets), posts={})
+    return HttpKeeper(http=http, base_url=BASE, token="a-token"), http
+
+
+def test_this_adapter_answers_the_gathering_seam_as_well_as_the_others() -> None:
+    """One adapter for every door to the keeper, which is what the seams say.
+
+    The gathering verbs used to live in a module beside the profiles that
+    built its own client out of an environment variable, so the thinker
+    reached the same record two ways with two credentials loaded from one
+    file twice.
+    """
+    keeper, _ = _gathering()
+    assert isinstance(keeper, Gathering)
+
+
+def test_an_execution_is_handed_back_as_the_record_wrote_it() -> None:
+    """Unparsed, because the walked step ids are the point and a case drops them."""
+    keeper, _ = _gathering(**{"/executions/exec-1": CannedResponse(200, EXECUTION)})
+
+    assert keeper.execution("exec-1") == EXECUTION
+
+
+def test_an_operations_schema_comes_back_without_the_rest_of_the_operation() -> None:
+    schema = {"required": ["NumAngles"], "properties": {"NumAngles": {"type": "integer"}}}
+    keeper, _ = _gathering(
+        **{"/operations/op-1": CannedResponse(200, {"name": "scan", "parameters_schema": schema})}
+    )
+
+    assert keeper.operation_schema("op-1") == schema
+
+
+def test_an_operation_declaring_no_schema_answers_empty_rather_than_raising() -> None:
+    """No bounds is an answer about the record; a failed request is not."""
+    keeper, _ = _gathering(**{"/operations/op-1": CannedResponse(200, {"name": "scan"})})
+
+    assert keeper.operation_schema("op-1") == {}
+
+
+def test_a_step_that_produced_nothing_answers_empty_and_not_an_error() -> None:
+    """A run that ended well and recorded nothing is the shape worth noticing."""
+    keeper, _ = _gathering(**{"/datasets": CannedResponse(200, {"items": []})})
+
+    assert keeper.datasets("step-1") == []
+
+
+def test_a_refused_lookup_raises_rather_than_reading_as_an_empty_facility() -> None:
+    """Empty context reads to a model as a beamline where nothing was tried."""
+    keeper, _ = _gathering(**{"/datasets": CannedResponse(500, {})})
+
+    with pytest.raises(RequestRefusedError):
+        keeper.datasets("step-1")

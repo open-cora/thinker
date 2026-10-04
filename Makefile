@@ -4,7 +4,14 @@
 # One project, one lockfile, one virtualenv. Every target runs here rather
 # than looping over a tree, which is the difference between this Makefile and
 # the root one that delegates to it.
-STYLED := src tests
+# Every tracked Python file in the project, not a list of the directories
+# somebody remembered. Each of these was a hand-written list once, and
+# each had Python outside it: the conductor's simulator, the keeper's two
+# deploy scripts, the reporter's two collectors. A simulator shipped a
+# docstring citing a test file that has never existed in any branch, and
+# no lane here was looking at it. ruff honours the ignore rules, so the
+# virtualenv and the built site stay out without being named.
+STYLED := .
 
 help:
 	@echo "Common targets:"
@@ -30,8 +37,14 @@ fmt:
 	uv run ruff check --fix $(STYLED)
 	uv run ruff format $(STYLED)
 
+# `infra` is in here and not in the sibling projects' lanes because what it
+# holds is different: theirs ship simulators and collectors, and this one
+# ships the profile that satisfies the inference seam. That file's claim to
+# satisfy it is structural, the entrypoint casts rather than checks, and a
+# type checker is the only thing that can read the claim before a
+# deployment does.
 typecheck:
-	uv run pyright src tests
+	uv run pyright src tests infra
 
 test:
 	uv run pytest

@@ -1,4 +1,4 @@
-"""The four keeper seams over its HTTP API, which is the only way in.
+"""The five keeper seams over its HTTP API, which is the only way in.
 
 Every call here goes out. The keeper holds no registry of thinkers and
 dials nothing, so what this reads and what it writes leave through the same
@@ -10,12 +10,12 @@ surface every other client uses.
     read      GET  /executions/{execution_id}
               GET  /procedures/{procedure_id}
     ask       POST /inquiries
-    question  GET  /inquiries/{inquiry_id}
+    read_inquiry GET  /inquiries/{inquiry_id}
     claim     POST /inquiries/{inquiry_id}/claim
     answer    POST /inquiries/{inquiry_id}/answer
     propose   POST /proposals
 
-`take` and `question` answer the same three facts off the same record,
+`take` and `read_inquiry` answer the same three facts off the same record,
 and both are here because they are asked at different moments. One names
 the question it wants and the other is asking which question to name.
 
@@ -37,11 +37,20 @@ would pair every later step with the wrong outcome and say nothing.
 ## Passed through rather than interpreted
 
 A procedure step reaches the case as the mapping the keeper sent, and an
-outcome reaches it as the keeper's own word. Both could be rewritten into
+outcome reaches it in the keeper's own words. Both could be rewritten into
 shapes of this package's own, and neither is: a thinker that normalised
 them would be deciding what about a step matters before anything has read
 it, and the discarded half would be invisible from the other side of the
 seam.
+
+An ended step is read in all three of the words the keeper writes about it
+and not just the first. The route returns what the driver observed, what
+the engine said about the run the step opened, and the class of whatever
+was raised, and the first two are separate claims the keeper declines to
+reconcile. Keeping only the driver's would hand the case a run step that
+was dispatched cleanly and whose engine then failed as an unremarkable
+success, which is the reading this seam exists to prevent rather than one
+it may leave to whoever reads a case.
 
 The one reading that is not a pass-through is `ended`, which is the status
 compared against the single value the keeper calls terminal.
@@ -58,9 +67,12 @@ and turning that into an abstention would file the evidence away.
 
 `claim` answers 409 when another thinker holds the question or when one
 has already been answered. That is not a fault and it does not travel as
-one: it comes back as False, and the caller stops without thinking. Every
-other unexpected status here raises, because every other one means the
-keeper and this adapter disagree about something.
+one: it comes back as False, and the caller thinks about that question no
+further. What it does instead is the caller's to decide, and the two
+differ: a single run ends, because somebody is standing there and there
+is nothing else to do, while the loop goes back for another question.
+Every other unexpected status here raises, because every other one means
+the keeper and this adapter disagree about something.
 
 ## Where the four conclusions become four words
 
@@ -81,7 +93,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
 
-from thinker.case import Question, Reading
+from thinker.case import Outcome, Question, Reading
 from thinker.conclusions import Abstain, Conclusion, Propose, Refer, Stop
 
 if TYPE_CHECKING:
@@ -276,7 +288,7 @@ class HttpKeeper:
             execution_id=str(execution["execution_id"]),
             procedure=str(procedure["name"]),
             asked=tuple((str(step["step_id"]), dict(step)) for step in composed),
-            became={str(step["procedure_step_id"]): _outcome(step["outcome"]) for step in walked},
+            became={str(step["procedure_step_id"]): _outcome(step) for step in walked},
             ended=str(execution["status"]) == ENDED,
         )
 
@@ -339,7 +351,7 @@ class HttpKeeper:
             objective=objective,
         )
 
-    def question(self, inquiry_id: str) -> Question:
+    def read_inquiry(self, inquiry_id: str) -> Question:
         """Read back a question somebody else put.
 
         Three fields are taken off a record that carries more. What is
@@ -432,6 +444,43 @@ class HttpKeeper:
             raise RequestRefusedError(response.status_code, response.text, method="POST", path=path)
         return str(response.json()["proposal_id"])
 
+    def execution(self, execution_id: str) -> Mapping[str, Any]:
+        """One execution as the record holds it, unparsed.
+
+        The record's own answer rather than a `Reading`, because this is
+        the half a case deliberately drops and whatever asked for it is
+        the only thing that reads it. Chief among the facts here is each
+        step's walked id, which a case cannot carry: a case is built from
+        the procedure, so its step ids are the composed ones.
+        """
+        answered: Mapping[str, Any] = self._get(f"/executions/{execution_id}")
+        return answered
+
+    def operation_schema(self, operation_id: str) -> Mapping[str, Any]:
+        """The parameters an operation accepts, and their bounds.
+
+        The schema alone rather than the whole operation, because the
+        name is already on the step that cites it and the bounds are the
+        part a proposal is refused against.
+
+        An operation with no schema answers as an empty mapping, which
+        says the record names no bounds rather than that the request
+        failed. A failed request raises.
+        """
+        operation = self._get(f"/operations/{operation_id}")
+        schema: Mapping[str, Any] = operation.get("parameters_schema") or {}
+        return schema
+
+    def datasets(self, step_id: str) -> Sequence[Mapping[str, Any]]:
+        """What one step produced, if anything.
+
+        Empty is an answer and not a failure: a step that ended well and
+        registered nothing is the shape this system exists to notice.
+        """
+        listed = self._get("/datasets", params={"step_id": step_id})
+        items: Sequence[Mapping[str, Any]] = listed.get("items") or []
+        return items
+
     def _get(
         self,
         path: str,
@@ -456,15 +505,35 @@ class HttpKeeper:
         return {"Authorization": f"Bearer {self.token}"}
 
 
-def _outcome(raw: object) -> str | None:
-    """The keeper's word for how a step ended, or nothing if it said none.
+def _outcome(step: Mapping[str, Any]) -> Outcome | None:
+    """The keeper's account of how a step ended, or nothing if it gave none.
 
-    Null here is the keeper's way of saying a step has reported nothing,
-    which it distinguishes from a step that was skipped. Both reach a case
-    intact: the first as `None` and the second as the word `Skipped`, and
-    flattening either into the other would lose the difference between a
-    step the walk never arrived at and one it arrived at and passed over.
+    A null outcome is the keeper's way of saying a step has reported
+    nothing, which it distinguishes from a step that was skipped. Both
+    reach a case intact: the first as `None` and the second as the word
+    `Skipped`, and flattening either into the other would lose the
+    difference between a step the walk never arrived at and one it arrived
+    at and passed over.
+
+    The other two words are read off the same step rather than fetched,
+    because the reading route returns all three together. They are absent
+    for most steps and that absence is theirs to mean: a step that opened
+    no run has no engine state, and a step that did not break has no cause.
+    Neither is a step that reported nothing, which is why only the outcome
+    decides whether there is anything here at all.
     """
+    reported = step["outcome"]
+    if reported is None:
+        return None
+    return Outcome(
+        reported=str(reported),
+        engine_state=_word(step["engine_state"]),
+        cause=_word(step["cause"]),
+    )
+
+
+def _word(raw: object) -> str | None:
+    """One of the keeper's words, or nothing where it wrote none."""
     return None if raw is None else str(raw)
 
 
@@ -475,4 +544,5 @@ __all__ = [
     "KeeperError",
     "RequestRefusedError",
     "Response",
+    "UnknownConclusionError",
 ]

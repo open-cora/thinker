@@ -98,11 +98,11 @@ from thinker.intake import DEFAULT_WAIT_SECONDS, serve
 from thinker.think import think
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from types import FrameType
 
     from thinker.case import Question
-    from thinker.seams import Concluding, Questioning
+    from thinker.seams import Claiming, Concluding, Gathering, Questioning
     from thinker.think import Thought
 
 ALREADY_TAKEN = 3
@@ -126,16 +126,25 @@ each of its requests, and the cost of a timeout there is the whole run.
 """
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    keep_going: Callable[[], bool] = lambda: True,
+) -> int:
     """Load, build, and either think once or keep answering.
 
     Returns a shell exit status, which in serve mode is reached only by
     being told to stop.
+
+    `keep_going` is what the loop asks between questions, and it reaches
+    nothing on the one-shot path. The default never stops, because a
+    caller that wants this to end is the one that knows when: at the
+    entrypoint that is what `stop_on_termination` hands back, and in a
+    test it is a turn count.
     """
     arguments = _parse(argv)
     try:
         config = load(arguments.config)
-        concluding = concluding_for(config)
     except ConfigError as problem:
         print(f"configuration: {problem}", file=sys.stderr)
         return 2
@@ -143,11 +152,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     timeout = max(REQUEST_TIMEOUT_SECONDS, arguments.wait + TIMEOUT_MARGIN_SECONDS)
     with httpx.Client(timeout=timeout) as http:
         keeper = HttpKeeper(http=http, base_url=config.base_url, token=config.token)
+        # The client is opened before the profile is built, because the
+        # profile is handed the seam that reads the record and that seam
+        # is this same adapter. Nothing is spent by opening one, so the
+        # guarantee the ordering used to give still holds: a profile that
+        # will not import says so before an execution is read.
+        try:
+            concluding = concluding_for(config, gathering=keeper)
+        except ConfigError as problem:
+            print(f"configuration: {problem}", file=sys.stderr)
+            return 2
+
         if arguments.serve:
-            return served(keeper, concluding, arguments)
+            return served(keeper, concluding, arguments, keep_going=keep_going)
 
         try:
-            question = asked(keeper, arguments)
+            question = asked(keeper, claiming=keeper, arguments=arguments)
             if question is None:
                 print("keeper: that inquiry is already taken up", file=sys.stderr)
                 return ALREADY_TAKEN
@@ -169,6 +189,8 @@ def served(
     keeper: HttpKeeper,
     concluding: Concluding,
     arguments: argparse.Namespace,
+    *,
+    keep_going: Callable[[], bool],
 ) -> int:
     """Answer questions until something stops this, and report that it stopped.
 
@@ -178,21 +200,22 @@ def served(
     reported to a caller, and a caller that wanted one would be waiting
     on a process that does not end.
 
-    The keeper is passed as itself rather than as five arguments of one
-    object, which is what it is: one adapter satisfying four seams. The
-    loop is handed them separately because it is written against the
-    seams, and this is the one module allowed to know they are the same
-    thing.
+    The keeper is passed four times rather than once, because the loop
+    is written against seams and this is the one module allowed to know
+    that one object satisfies five of them.
+
+    Four of those five, and which one is missing is worth seeing. A loop
+    takes questions off the record and never opens one, so `Questioning`
+    reaches only the single-shot path, where a person names an execution
+    and an objective to open a question from. Splitting the claim off it
+    is what made that visible: the loop used to be handed the verb for
+    opening a question as well, and the only thing keeping it from
+    calling it was that it did not.
     """
-    stopping = False
-
-    def keep_going() -> bool:
-        return not stopping
-
     try:
         serve(
             keeper,
-            questioning=keeper,
+            claiming=keeper,
             observing=keeper,
             advising=keeper,
             concluding=concluding,
@@ -200,12 +223,13 @@ def served(
             keep_going=keep_going,
         )
     except KeyboardInterrupt:
-        stopping = True
         print("\nstopping", file=sys.stderr)
     return 0
 
 
-def asked(questioning: Questioning, arguments: argparse.Namespace) -> Question | None:
+def asked(
+    questioning: Questioning, *, claiming: Claiming, arguments: argparse.Namespace
+) -> Question | None:
     """Settle which question this run is answering, or None if it lost it.
 
     Two ways in and one difference between them, which is whether anybody
@@ -222,9 +246,9 @@ def asked(questioning: Questioning, arguments: argparse.Namespace) -> Question |
     question do not both spend an inference on it.
     """
     if arguments.inquiry is not None:
-        if not questioning.claim(arguments.inquiry):
+        if not claiming.claim(arguments.inquiry):
             return None
-        return questioning.question(arguments.inquiry)
+        return questioning.read_inquiry(arguments.inquiry)
     return questioning.ask(arguments.execution, arguments.objective)
 
 
@@ -258,12 +282,20 @@ def reported(thought: Thought) -> dict[str, object]:
     return reading
 
 
-def concluding_for(config: ThinkerConfig) -> Concluding:
+def concluding_for(config: ThinkerConfig, *, gathering: Gathering) -> Concluding:
     """Build the provider seam the configuration named.
 
     The import happens at startup rather than at the moment of thinking,
     so a profile that is not importable is a message before an execution is
     read rather than a failure after two requests have been spent on it.
+
+    `gathering` is handed to the profile rather than left for it to find.
+    A profile that wants more than a case carries used to build its own
+    way to the record, loading the configuration a second time out of an
+    environment variable, and that is a second credential path and a
+    second client that nothing here wired. A profile that wants none of
+    it takes the argument and ignores it, which is cheaper than two ways
+    of building one.
 
     What the named attribute returns is cast rather than checked.
     `Concluding` is a Protocol, so the check that matters is structural and
@@ -292,7 +324,7 @@ def concluding_for(config: ThinkerConfig) -> Concluding:
             "callable. It should be something that returns an inference seam."
         )
 
-    return cast("Concluding", build())
+    return cast("Concluding", build(gathering))
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -348,27 +380,52 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     return arguments
 
 
-def stop_on_termination() -> None:
-    """Make a service manager's stop signal behave like Ctrl-C.
+def stop_on_termination() -> Callable[[], bool]:
+    """Ask the loop to stop when its thinking ends, on Ctrl-C or SIGTERM.
 
-    Ctrl-C already arrives as `KeyboardInterrupt`, so the cheapest way
-    to give both signals one shutdown is to make the second arrive that
-    way too. Without this, the loop's orderly stop is reachable only
-    from a keyboard, which a daemon does not have.
+    Returns what `serve` asks between questions. A signal sets the flag
+    and returns, so the thinking in progress finishes and writes its
+    conclusion down. That is the orderly stop `intake` describes and the
+    reason its loop takes a predicate at all.
 
-    Installed for every mode rather than only for the loop. A one-shot
-    run is over too quickly for it to matter, and a handler that is
+    Raising is what this did instead, and it reached none of that. A
+    `KeyboardInterrupt` is a `BaseException`, so the loop's arm did not
+    catch one: a signal landing inside a thinking unwound through it,
+    and because nothing is written until there is a conclusion, the
+    inquiry was left claimed with nothing on it. That is the state this
+    system reads as an abandoned thinker. The flag was set afterwards,
+    around a `serve` that had already returned, where nothing would read
+    it again, so `keep_going` answered True for the whole life of every
+    process that ever ran.
+
+    Both signals, because the two want one shutdown and a daemon has no
+    keyboard. Installed for every mode rather than only for the loop: a
+    one-shot run is over too quickly for it to matter, and a handler
     installed only sometimes is one more thing about the entrypoint that
     depends on which flags were passed.
+
+    The cost is that a stop asked for while the loop sits in a long poll
+    waits for that poll to come back, which `--wait` bounds. A second
+    signal restores the default, so an operator who will not wait that
+    out sends another and the process goes at once.
     """
+    stopping = False
 
-    def interrupt(number: int, frame: FrameType | None) -> None:
-        _ = number, frame
-        raise KeyboardInterrupt
+    def keep_going() -> bool:
+        return not stopping
 
-    signal.signal(signal.SIGTERM, interrupt)
+    def ask_to_stop(number: int, frame: FrameType | None) -> None:
+        nonlocal stopping
+        _ = frame
+        stopping = True
+        signal.signal(number, signal.SIG_DFL)
+        print("\nstopping when this thinking ends", file=sys.stderr)
+
+    for number in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(number, ask_to_stop)
+
+    return keep_going
 
 
 if __name__ == "__main__":
-    stop_on_termination()
-    raise SystemExit(main())
+    raise SystemExit(main(keep_going=stop_on_termination()))
